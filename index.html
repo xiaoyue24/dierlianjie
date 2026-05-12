@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>金色梦幻宇宙 - 金牛座生日庆典</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui-overlay {
+            position: absolute;
+            bottom: 40px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 215, 0, 0.9);
+            font-size: 14px;
+            letter-spacing: 4px;
+            pointer-events: none;
+            z-index: 10;
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.7);
+            transition: opacity 0.4s ease;
+        }
+        #music-control {
+            position: absolute;
+            top: env(safe-area-inset-top, 20px);
+            right: 20px;
+            z-index: 100;
+            width: 38px;
+            height: 38px;
+            cursor: pointer;
+            background: rgba(255, 215, 0, 0.15);
+            border: 1px solid rgba(255, 215, 0, 0.4);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            opacity: 1; /* 直接可见 */
+        }
+        #music-control.playing {
+            animation: rotate 4s linear infinite;
+            background: rgba(255, 215, 0, 0.3);
+        }
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        #music-control svg { fill: #ffcc33; width: 22px; height: 22px; }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="ui-overlay"></div>
+    <div id="music-control">
+        <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+    </div>
+
+    <!-- 音乐链接 -->
+    <audio id="bgm" loop playsinline>
+        <source src="https://cdn.jsdelivr.net/gh/xiaoyue24/3music@main/birthday.mp3" type="audio/mpeg">
+    </audio>
+
+    <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js",
+                "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/index.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+        import gsap from 'gsap';
+
+        const CONFIG = {
+            particleCount: 18000, 
+            bgParticleCount: 2000,
+            goldColor: 0xffcc33,
+            bloom: { strength: 0.3, radius: 0.3, threshold: 0.8 },
+            taurusImgUrl: 'https://cdn.jsdelivr.net/gh/xiaoyue24/tupian@main/jinnuizuo.png'
+        };
+
+        let scene, camera, renderer, composer, controls, mainParticles, bgParticles;
+        let width = window.innerWidth, height = window.innerHeight;
+        let isStarted = false;
+        let isAnimationFinished = false;
+
+        let morphStates = {
+            s1: null,
+            s2: null,
+            s3: null
+        };
+
+        const audio = document.getElementById('bgm');
+        const musicBtn = document.getElementById('music-control');
+        const overlay = document.getElementById('ui-overlay');
+
+        function toggleMusic() {
+            if (audio.paused) {
+                audio.play();
+                musicBtn.classList.add('playing');
+            } else {
+                audio.pause();
+                musicBtn.classList.remove('playing');
+            }
+        }
+
+        async function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, width / height, 1, 10000);
+            camera.position.set(0, 0, 1600);
+
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: false,
+                powerPreference: "high-performance" 
+            });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(width, height);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.enabled = false;
+
+            const renderPass = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(width, height), CONFIG.bloom.strength, CONFIG.bloom.radius, CONFIG.bloom.threshold);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            createBackground();
+            createMainSystem();
+
+            window.addEventListener('resize', onResize);
+            musicBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMusic(); });
+
+            let taurusPoints = [];
+            try {
+                taurusPoints = await sampleImageToPoints(CONFIG.taurusImgUrl);
+            } catch (e) {
+                taurusPoints = generatePerfectTaurusPoints();
+            }
+            prepareMorphStates(taurusPoints);
+
+            // 预加载完成，直接启动
+            isStarted = true;
+            
+            // 尝试自动播放音乐
+            audio.play().then(() => {
+                musicBtn.classList.add('playing');
+            }).catch(() => {
+                console.log("音频自动播放被拦截，等待交互开启。");
+            });
+
+            // 直接开始动画
+            startAnimation();
+            
+            animate();
+        }
+
+        function prepareMorphStates(taurusImgPoints) {
+            const count = CONFIG.particleCount;
+            const scale = (width < 768 ? 0.6 : 0.85);
+
+            const s1Points = getTextImagePoints("许个愿吧", 160, scale);
+            morphStates.s1 = new Float32Array(count * 3);
+            for(let i=0; i<count; i++) {
+                const p = s1Points[i % s1Points.length];
+                morphStates.s1[i*3] = p.x; morphStates.s1[i*3+1] = p.y; morphStates.s1[i*3+2] = (Math.random()-0.5)*10;
+            }
+
+            morphStates.s2 = new Float32Array(count * 3);
+            const w = 400 * scale, h = 260 * scale;
+            for(let i=0; i<count; i++) {
+                let x, y, z = (Math.random()-0.5)*15;
+                const r = Math.random();
+                if(r < 0.4) {
+                    const sd = Math.random();
+                    if(sd < 0.25) { x=-w/2; y=(Math.random()-0.5)*h; }
+                    else if(sd < 0.5) { x=w/2; y=(Math.random()-0.5)*h; }
+                    else if(sd < 0.75) { y=-h/2; x=(Math.random()-0.5)*w; }
+                    else { y=h/2; x=(Math.random()-0.5)*w; }
+                } else if(r < 0.7) {
+                    const tx = (Math.random()-0.5)*w;
+                    x = tx; y = h/2 - Math.abs(tx)*0.75;
+                } else { x = (Math.random()-0.5)*w*0.9; y = (Math.random()-0.5)*h*0.9; }
+                morphStates.s2[i*3]=x; morphStates.s2[i*3+1]=y; morphStates.s2[i*3+2]=z;
+            }
+
+            const tTextPoints = getTextImagePoints("金牛座", 50, scale); 
+            morphStates.s3 = new Float32Array(count * 3);
+            const splitIdx = Math.floor(count * 0.9); 
+            for(let i=0; i<count; i++) {
+                if(i < splitIdx) {
+                    const p = taurusImgPoints[i % taurusImgPoints.length];
+                    morphStates.s3[i*3] = p.x * scale * 1.2; morphStates.s3[i*3+1] = p.y * scale * 1.2 + 60 * scale; morphStates.s3[i*3+2] = (Math.random()-0.5)*25;
+                } else {
+                    const p = tTextPoints[i % tTextPoints.length];
+                    morphStates.s3[i*3] = p.x; morphStates.s3[i*3+1] = p.y - 480 * scale; morphStates.s3[i*3+2] = (Math.random()-0.5)*10;
+                }
+            }
+        }
+
+        function createBackground() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(CONFIG.bgParticleCount * 3);
+            for (let i = 0; i < CONFIG.bgParticleCount; i++) {
+                const r = 3500 + Math.random() * 1500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                pos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                pos[i * 3 + 2] = r * Math.cos(phi);
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            bgParticles = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.1, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending }));
+            scene.add(bgParticles);
+        }
+
+        function createMainSystem() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(CONFIG.particleCount * 3);
+            for (let i = 0; i < CONFIG.particleCount; i++) {
+                pos[i * 3] = (Math.random() - 0.5) * 5000;
+                pos[i * 3 + 1] = (Math.random() - 0.5) * 5000;
+                pos[i * 3 + 2] = (Math.random() - 0.5) * 5000;
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            mainParticles = new THREE.Points(geo, new THREE.PointsMaterial({ 
+                color: CONFIG.goldColor, size: 1.8, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending 
+            }));
+            scene.add(mainParticles);
+        }
+
+        function generatePerfectTaurusPoints() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const size = 1000; canvas.width = size; canvas.height = size;
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, size, size);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 75; ctx.lineCap = 'round';
+            const cx = size / 2, cy = size / 2 + 130;
+            ctx.beginPath(); ctx.arc(cx, cy, 140, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(cx, cy - 120, 280, Math.PI * 0.28, Math.PI * 0.72, false); ctx.stroke();
+            const data = ctx.getImageData(0, 0, size, size).data;
+            const points = [];
+            for (let y = 0; y < size; y += 2) {
+                for (let x = 0; x < size; x += 2) {
+                    if (data[(y * size + x) * 4] > 150) { 
+                        points.push({ x: (x - cx) * 1.5, y: (cy - y - 130) * 1.5 });
+                    }
+                }
+            }
+            return points;
+        }
+
+        async function sampleImageToPoints(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous"; 
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    const size = 512;
+                    canvas.width = size; canvas.height = size;
+                    ctx.drawImage(img, 0, 0, size, size);
+                    try {
+                        const data = ctx.getImageData(0, 0, size, size).data;
+                        const points = [];
+                        for (let i = 0; i < data.length; i += 4) {
+                            if (data[i + 3] > 60 || (data[i] > 180)) {
+                                const pixelIdx = i / 4;
+                                points.push({ x: ((pixelIdx % size) - size / 2) * 1.9, y: (size / 2 - Math.floor(pixelIdx / size)) * 1.9 });
+                            }
+                        }
+                        resolve(points);
+                    } catch (e) { reject(e); }
+                };
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+
+        function getTextImagePoints(text, fontSize, scale = 1.0) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 1200; canvas.height = 400;
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#fff'; ctx.font = `bold ${fontSize}px "Microsoft YaHei", sans-serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            const points = [];
+            for (let y = 0; y < canvas.height; y += 4) {
+                for (let x = 0; x < canvas.width; x += 4) {
+                    if (imgData[(y * canvas.width + x) * 4] > 120) {
+                        points.push({ x: (x - canvas.width / 2) * 1.5 * scale, y: (canvas.height / 2 - y) * 1.5 * scale });
+                    }
+                }
+            }
+            return points;
+        }
+
+        function startAnimation() {
+            const attr = mainParticles.geometry.attributes.position;
+            const cur = attr.array;
+            const tl = gsap.timeline();
+
+            const morph = (target, duration = 0.8, ease = "power2.inOut") => {
+                const startArr = new Float32Array(cur);
+                const proxy = { p: 0 };
+                return gsap.to(proxy, {
+                    p: 1, duration, ease,
+                    onUpdate: () => {
+                        for(let i = 0; i < cur.length; i++) { cur[i] = startArr[i] + (target[i] - startArr[i]) * proxy.p; }
+                        attr.needsUpdate = true;
+                    }
+                });
+            };
+
+            // 1. 许愿阶段 (维持优雅慢速 2.0s)
+            tl.add(() => { overlay.innerText = "愿望初始"; });
+            tl.add(morph(morphStates.s1, 2.0)); 
+            tl.to({}, { duration: 1.5 });
+
+            // 2. 封装阶段 (维持优雅慢速 1.5s)
+            tl.add(() => { overlay.innerText = "封装入信"; });
+            tl.add(morph(morphStates.s2, 1.5, "power2.inOut")); 
+            tl.to({}, { duration: 1.0 });
+
+            // 3. 升华阶段 (极速爆发)
+            tl.add(() => { overlay.innerText = "升华为星"; });
+            tl.to(mainParticles.material, { opacity: 0, duration: 0.4, ease: "power2.in" });
+            
+            tl.add(() => { 
+                gsap.to(camera.position, { z: 1200, duration: 1.0, ease: "power2.out" });
+                overlay.innerText = "星辰指引：金牛座";
+            });
+
+            tl.to(mainParticles.material, { opacity: 0.9, duration: 0.3 }, "+=0.1");
+            tl.add(morph(morphStates.s3, 1.6, "power4.out"), "-=0.2"); 
+
+            tl.add(() => {
+                overlay.innerText = "守护之光";
+                isAnimationFinished = true;
+                controls.enabled = true;
+            });
+        }
+
+        function onResize() {
+            width = window.innerWidth; height = window.innerHeight;
+            camera.aspect = width / height; camera.updateProjectionMatrix();
+            renderer.setSize(width, height); composer.setSize(width, height);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) controls.update();
+            const t = Date.now() * 0.0006;
+            if(bgParticles) bgParticles.rotation.y = t * 0.004;
+
+            if(mainParticles) {
+                if(!isAnimationFinished && isStarted) {
+                    mainParticles.rotation.y = Math.sin(t*0.2)*0.01;
+                }
+            }
+            composer.render();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
